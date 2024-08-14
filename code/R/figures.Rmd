@@ -1,0 +1,134 @@
+---
+title: "figures"
+output: html_document
+date: "2023-06-21"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+source('setup.R')
+```
+
+## Mapping Rooftop Materials
+
+```{r}
+head(sample)
+```
+
+Need to pivot the table to plot spectral response curves by roof material type:
+
+```{r}
+
+# Set up a dictionary for the band/wavelength combinations
+psband <- c("coastal_blue","blue","green_i","green","yellow","red","rededge","nir")
+wavelength <- c(443,490,531,565,610,665,705,865)
+band_wave <- data.frame(psband,wavelength)
+rm(psband,wavelength)
+
+# Pivot the table and tidy
+sample_p <- sample %>%
+  select(c(class_code,description,coastal_blue,blue,green_i,green,yellow,red,rededge,nir)) %>%
+  pivot_longer(
+    cols = -c(class_code,description),
+    names_to="psband",
+    values_to="reflectance"
+  ) %>%
+  left_join(., band_wave, by="psband")
+head(sample_p)
+
+```
+
+Now we can generate the spectral response plot by roof material type with variance shading.
+
+```{r}
+
+# Set up a vector for the colors
+cols <- c("#74a9cf", "#034e7b", "#a1d99b", "#006d2c", "#DCC95B", "#96534F", "#D29D9D", "#826D42")
+bands <- c("Coastal Blue","Blue","Green(I)","Green","Yellow","Red","Red-edge","NIR")
+
+# Set up a data frame for the rectangles
+rects <- data.frame(
+  ymin = -Inf, ymax = Inf, 
+  xmin = c(438,485,526,560,605,660,700,860), 
+  xmax = c(448,495,536,570,615,670,710,870), 
+  band = bands,
+  col = cols
+)
+
+head(rects)
+
+# Set up the data frame
+df <- sample_p %>%
+  group_by(class_code,psband) %>%
+  summarize_all(.funs=mean)
+head(df)
+
+
+spectral_response <- ggplot() +
+  geom_rect(data=rects, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,fill=band),alpha=0.2) +
+  scale_fill_manual(
+    values = c("#74a9cf", "#034e7b", "#a1d99b", "#006d2c", "#DCC95B", "#96534F", "#D29D9D", "#826D42"), 
+    labels = c("Coastal Blue","Blue","Green(I)","Green","Yellow","Red","Red-edge","NIR"),
+    breaks = c("Coastal Blue","Blue","Green(I)","Green","Yellow","Red","Red-edge","NIR")) +
+  geom_line(data=df, aes(x=wavelength,y=reflectance,color=class_code)) +
+  scale_color_viridis(
+    discrete=TRUE, option="turbo",
+    labels=c("Comp. Shingle","Metal","Shingle","Slate","Tile","Urethane","Wood Shingle")) +
+  theme_bw(8) +
+  labs(fill="Band Center",color="Material",
+       x="Wavelength (nm)", y="Reflectance",
+       title="Roof Material Spectral Response",
+       subtitle="Washington, District of Columbia")
+spectral_response
+
+# Save it out
+ggsave(spectral_response, file = "../figures/PSScene8Band_DC_Rooftops_SpectralResponse.png",
+       dpi = 300, bg="white", width=4.25, height=4.25) # adjust dpi accordingly
+
+```
+
+We can see the spectral similarities between composition, wood, and slate roofing materials. This may present an issue when classifying roof types...
+
+Now, plot the spectral response of the indices:
+
+```{r}
+# Pivot the table and tidy
+sample_si <- sample %>%
+  select(c(class_code,ndre,vgnir,vrnir,ndbibg,ndbirg)) %>%
+  pivot_longer(
+    cols = -class_code,
+    names_to="index",
+    values_to="reflectance"
+  )
+head(sample_si)
+```
+
+```{r}
+# Set up the data frame
+df2 <- sample_si %>%
+  group_by(class_code,index) %>%
+  summarize_all(.funs=mean)
+head(df2)
+
+
+index_response <- ggplot() +
+  geom_boxplot(data=sample_si, aes(y=reflectance,fill=reorder(factor(class_code),-reflectance)),
+               outlier.size = 0.1) +
+  scale_fill_viridis(
+    discrete=TRUE, option="turbo",
+    labels=c("Comp. Shingle","Metal","Shingle","Slate","Tile","Urethane","Wood Shingle")) +
+  facet_grid(~index) +
+  labs(fill="Material") +
+  theme_bw(8) +
+  theme(legend.position = "bottom",
+        axis.text.x = element_blank())
+index_response
+
+# Save it out
+ggsave(index_response, file = "../figures/PSScene8Band_DC_Rooftops_indexResponse.png",
+       dpi = 300, bg="white", height=4, width=4.25) # adjust dpi accordingly
+```
+
+## Endmember Optimization
+
+

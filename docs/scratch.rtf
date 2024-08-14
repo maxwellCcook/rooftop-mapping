@@ -1,0 +1,411 @@
+{\rtf1\ansi\ansicpg1252\cocoartf2709
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 Courier;\f1\fmodern\fcharset0 Courier-Oblique;\f2\fswiss\fcharset0 Helvetica;
+}
+{\colortbl;\red255\green255\blue255;\red252\green70\blue117;\red34\green31\blue35;\red155\green216\blue99;
+\red129\green128\blue129;\red240\green132\blue80;\red95\green93\blue95;\red251\green251\blue249;\red105\green213\blue226;
+\red254\green209\blue84;\red154\green135\blue238;\red95\green93\blue95;\red34\green31\blue35;\red251\green251\blue249;
+\red252\green70\blue117;\red154\green135\blue238;\red155\green216\blue99;\red129\green128\blue129;\red254\green209\blue84;
+\red105\green213\blue226;}
+{\*\expandedcolortbl;;\csgenericrgb\c98824\c27451\c45882;\csgenericrgb\c13333\c12157\c13725;\csgenericrgb\c60784\c84706\c38824;
+\csgenericrgb\c50588\c50196\c50588;\csgenericrgb\c94118\c51765\c31373;\csgenericrgb\c37255\c36471\c37255;\csgenericrgb\c98431\c98431\c97647;\csgenericrgb\c41176\c83529\c88627;
+\csgenericrgb\c99608\c81961\c32941;\csgenericrgb\c60392\c52941\c93333;\csgenericrgb\c37255\c36471\c37255;\csgenericrgb\c13333\c12157\c13725;\csgenericrgb\c98431\c98431\c97647;
+\csgenericrgb\c98824\c27451\c45882;\csgenericrgb\c60392\c52941\c93333;\csgenericrgb\c60784\c84706\c38824;\csgenericrgb\c50588\c50196\c50588;\csgenericrgb\c99608\c81961\c32941;
+\csgenericrgb\c41176\c83529\c88627;}
+\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\fs26 \cf2 \cb3 def \cf4 scale_psscene\cf5 (
+\f1\i \cf6 img_path
+\f0\i0 \cf5 , 
+\f1\i \cf6 region
+\f0\i0 \cf5 , 
+\f1\i \cf6 open_file
+\f0\i0 \cf2 =False\cf5 )\cf2 :\
+\
+    
+\f1\i \cf7 # Load the PlanetScope 4-band image\
+    
+\f0\i0 \cf2 if 
+\f1\i \cf6 open_file 
+\f0\i0 \cf2 is True:\
+        \cf8 planet_image \cf2 = \cf8 rio\cf5 .\cf4 open\cf5 (
+\f1\i \cf6 img_path
+\f0\i0 \cf5 )\
+    \cf2 else:\
+        \cf8 planet_image \cf2 = 
+\f1\i \cf6 img_path\
+\
+    \cf7 # Clip to ROI\
+    
+\f0\i0 \cf8 planet_image \cf2 = \cf4 clip_to_shape\cf5 (
+\f1\i \cf6 img
+\f0\i0 \cf2 =\cf8 planet_image\cf5 , 
+\f1\i \cf6 shp
+\f0\i0 \cf2 =
+\f1\i \cf6 region
+\f0\i0 \cf5 , 
+\f1\i \cf6 proj4
+\f0\i0 \cf2 =\cf8 epsg\cf5 )\
+\
+    
+\f1\i \cf9 print
+\f0\i0 \cf5 (\cf10 '... performing radiometric normalization ...'\cf5 )\
+\
+    
+\f1\i \cf7 # Read the individual bands into separate numpy arrays\
+    
+\f0\i0 \cf8 band_red \cf2 = \cf8 planet_image\cf5 .\cf4 read\cf5 (\cf11 1\cf5 ).\cf4 astype\cf5 (\cf8 np\cf5 .\cf8 float32\cf5 )\
+    \cf8 band_green \cf2 = \cf8 planet_image\cf5 .\cf4 read\cf5 (\cf11 2\cf5 ).\cf4 astype\cf5 (\cf8 np\cf5 .\cf8 float32\cf5 )\
+    \cf8 band_blue \cf2 = \cf8 planet_image\cf5 .\cf4 read\cf5 (\cf11 3\cf5 ).\cf4 astype\cf5 (\cf8 np\cf5 .\cf8 float32\cf5 )\
+    \cf8 band_nir \cf2 = \cf8 planet_image\cf5 .\cf4 read\cf5 (\cf11 4\cf5 ).\cf4 astype\cf5 (\cf8 np\cf5 .\cf8 float32\cf5 )\
+\
+    
+\f1\i \cf7 # Calculate the normalization factors\
+    
+\f0\i0 \cf8 mean_red \cf2 = \cf8 np\cf5 .\cf4 mean\cf5 (\cf8 band_red\cf5 )\
+    \cf8 mean_green \cf2 = \cf8 np\cf5 .\cf4 mean\cf5 (\cf8 band_green\cf5 )\
+    \cf8 mean_blue \cf2 = \cf8 np\cf5 .\cf4 mean\cf5 (\cf8 band_blue\cf5 )\
+    \cf8 mean_nir \cf2 = \cf8 np\cf5 .\cf4 mean\cf5 (\cf8 band_nir\cf5 )\
+\
+    \cf8 scale_red \cf2 = \cf8 mean_green \cf2 / \cf8 mean_red\
+    scale_blue \cf2 = \cf8 mean_green \cf2 / \cf8 mean_blue\
+    scale_nir \cf2 = \cf8 mean_green \cf2 / \cf8 mean_nir\
+\
+    
+\f1\i \cf7 # Apply the normalization factors to the individual bands\
+    
+\f0\i0 \cf8 band_red_normalized \cf2 = \cf8 band_red \cf2 * \cf8 scale_red\
+    band_blue_normalized \cf2 = \cf8 band_blue \cf2 * \cf8 scale_blue\
+    band_nir_normalized \cf2 = \cf8 band_nir \cf2 * \cf8 scale_nir\
+\
+    
+\f1\i \cf7 # Create a new raster file for the normalized bands\
+    
+\f0\i0 \cf8 profile \cf2 = \cf8 planet_image\cf5 .\cf8 profile  
+\f1\i \cf7 # Get the profile of the original image\
+\
+    # Update the profile to reflect the new data\
+    
+\f0\i0 \cf8 profile\cf5 .\cf8 count \cf2 = \cf11 4  
+\f1\i \cf7 # Set the band count to 4\
+    
+\f0\i0 \cf8 profile\cf5 .\cf8 dtype \cf2 = \cf8 np\cf5 .\cf8 float32  
+\f1\i \cf7 # Set the data type to float32\
+\
+    # Create a new file to save the normalized bands\
+    
+\f0\i0 \cf8 out_img_file \cf2 = \cf8 os\cf5 .\cf8 path\cf5 .\cf4 basename\cf5 (
+\f1\i \cf6 img_path
+\f0\i0 \cf5 )[\cf2 :-\cf11 5\cf5 ]\cf2 +\cf10 '_RN.tif'\
+    
+\f1\i \cf9 print
+\f0\i0 \cf5 (\cf10 f'Saving \cf9 \{\cf8 out_img_file\cf9 \}\cf10 '\cf5 )\
+    \cf8 out_img_path \cf2 = \cf8 os\cf5 .\cf8 path\cf5 .\cf4 join\cf5 (\
+        \cf8 os\cf5 .\cf4 getcwd\cf5 (),\
+        \cf10 f'data/spatial/mod/dc_data/PSScene4Band-PSSD/\cf9 \{\cf8 out_img_file\cf9 \}\cf10 '\
+    \cf5 )\
+\
+    \cf2 with \cf8 rio\cf5 .\cf4 open\cf5 (\cf8 out_img_path\cf5 , \cf10 'w'\cf5 , \cf2 **\cf8 profile\cf5 ) \cf2 as \cf8 dst\cf2 :\
+        \cf8 dst\cf5 .\cf4 write\cf5 (\cf8 band_red_normalized\cf5 , \cf11 1\cf5 )\
+        \cf8 dst\cf5 .\cf4 write\cf5 (\cf8 band_green\cf5 , \cf11 2\cf5 )  
+\f1\i \cf7 # Green band remains unchanged\
+        
+\f0\i0 \cf8 dst\cf5 .\cf4 write\cf5 (\cf8 band_blue_normalized\cf5 , \cf11 3\cf5 )\
+        \cf8 dst\cf5 .\cf4 write\cf5 (\cf8 band_nir_normalized\cf5 , \cf11 4\cf5 )\
+\
+    
+\f1\i \cf9 print
+\f0\i0 \cf5 (\cf10 '... success ...'\cf5 )\
+\
+\
+\
+\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f2 \cf8 \cb3 \
+
+\f1\i \cf7 # def process_psscene(img_paths, udm2_paths, region, crs):\
+#\
+#     scenes = []\
+#\
+#     # Load the PlanetScope 4-band image\
+#\
+#     print("... Masking using the UDM and Clipping to ROI ...")\
+#\
+#     for i in range(len(img_paths)):\
+#         tile = rxr.open_rasterio(img_paths[i])\
+#         udm2 = rxr.open_rasterio(udm2_paths[i])\
+#         clipped = mask_and_clip_to_shape(tile, udm2, shp=region, proj4=crs)\
+#         scenes.append(clipped)\
+#         del clipped\
+#         del tile\
+#         del udm2\
+#\
+#     print('... starting radiometric normalization ...')\
+#\
+#     # Get the scale factors and offsets for radiometric normalization\
+#     scale_factors = [scene.scale_factor for scene in scenes]\
+#     print(scale_factors)\
+#     offsets = [scene.add_offset for scene in scenes]\
+#\
+#     # Loop through scenes, scale the bands, export image\
+#     normalized_scenes = []\
+#     for scene in scenes:\
+#         normalized_bands = []  # empty list to store the corrected bands\
+#         for band in scene.coords['band'].values:\
+#             # Apply the scale and offset to the band\
+#             normalized_band = (scene.sel(band=band) * scale_factors[band-1]) + offsets[band-1]\
+#             # Assign the correct CRS\
+#             normalized_band = normalized_band.rio.write_crs(scene.rio.crs)\
+#             normalized_bands.append(normalized_band)  # append to the empty list\
+#             del normalized_band\
+#         # Concatenate the bands for a single scene\
+#         normalized_scene = xr.concat(normalized_bands, dim='band')\
+#         normalized_scenes.append(normalized_scene)  # Append the normalized scene to the empty list4\
+#         del normalized_scene\
+#         del normalized_bands\
+#\
+#     # Export to new images\
+#     for i in range(len(scenes)):\
+#         basename = os.path.basename(img_paths[i])[:-5] + '_RN.tif'\
+#         print(f'Saving \{basename\}')\
+#         out_img_path = os.path.join(\
+#             os.getcwd(),\
+#             f'data/spatial/mod/dc_data/PSScene4Band-PSSD/\{basename\}'\
+#         )\
+#         normalized_scenes[i].to_raster(out_img_path, compress='LZW', dtype="uint16")\
+#\
+#     # Close the scenes\
+#     for scene in scenes:\
+#         scene.close()\
+#     # Clean up\
+#     del scene\
+#     del scenes\
+#     del normalized_scenes\
+#\
+#     print('... success ...')\
+#\
+#\
+# def color_blending_psscenes(psscenes):\
+#\
+#     print('.. starting color blending for all scenes ...')\
+#\
+#     scenes = []\
+#     # Open all scenes, append to a list\
+#     for path in psscenes:\
+#         scenes.append(rxr.open_rasterio(path,masked=True,cache=False))\
+#\
+#     # Color balancing\
+#     balanced_scenes = []\
+#     for scene in scenes:\
+#\
+#         # Extract bands\
+#         red = scene.sel(band=1)\
+#         green = scene.sel(band=2)\
+#         blue = scene.sel(band=3)\
+#         nir = scene.sel(band=4)\
+#\
+#         # Calculate scaling factors\
+#         red_scale = np.median(green) / np.median(red)\
+#         blue_scale = np.median(green) / np.median(blue)\
+#         nir_scale = np.median(green) / np.median(nir)\
+#\
+#         # Apply scaling factors\
+#         balanced_red = red * red_scale\
+#         balanced_blue = blue * blue_scale\
+#         balanced_nir = nir * nir_scale\
+#\
+#         # Create balanced scene\
+#         balanced_scene = xr.concat([balanced_red, green, balanced_blue, balanced_nir], dim='band')\
+#         balanced_scenes.append(balanced_scene)\
+#\
+#     # Histogram matching\
+#     matched_scenes = []\
+#     reference_scene = balanced_scenes[0]  # Select the first scene as reference\
+#     for scene in balanced_scenes:\
+#         matched_scene = scene.copy()\
+#         for band in matched_scene.band.values:\
+#             matched_scene[band] = exposure.match_histograms(matched_scene[band], reference_scene[band])\
+#         matched_scenes.append(matched_scene)\
+#\
+#     # Export to new image\
+#     for i in range(len(scenes)):\
+#         basename = os.path.basename(psscenes[i])[:-4] + '_RN.tif'\
+#         print(f'Saving \{basename\}')\
+#         out_img_path = os.path.join(\
+#             os.getcwd(),\
+#             f'data/spatial/mod/dc_data/PSScene4Band-PSSD/balanced/\{basename\}'\
+#         )\
+#         matched_scenes[i].rio.to_raster(out_img_path)\
+#\
+#     # Close the scenes\
+#     for scene in scenes:\
+#         scene.close()\
+#\
+#\
+# def balance_composite(cbscenes):\
+#\
+#     scenes = []\
+#     for path in cbscenes:\
+#         scenes.append(rxr.open_rasterio(path, masked=True, cache=False))\
+#\
+#     extent = roi_geom\
+#     bbox = box(*extent)\
+#     target_crs = scenes[0].rio.crs\
+#     target_res = (scenes[0].rio.resolution[0], scenes[0].rio.resolution[1])\
+#\
+#     # Determine the width and height of the array\
+#     width = int(extent[2] - extent[0] + 1)\
+#     height = int(extent[3] - extent[1] + 1)\
+#     # Create an empty NumPy array with the specified width and height\
+#     blend_image = np.zeros((height, width))\
+#\
+#     for scene in scenes:\
+#         alpha_mask = np.where(0,1,0)\
+#         alpha_mask_scene = scene * alpha_mask\
+#         blend_image = blend_image + alpha_mask_scene\
+#\
+#     # Normalize the composite image by dividing by the number of scenes\
+#     composite = blend_image / len(scenes)\
+#\
+#     # Set the coordinate reference system (CRS) for the composite image\
+#     composite.rio.set_crs(epsg)\
+#\
+#     # Set the spatial transform (affine matrix) for the composite image\
+#     composite.rio.set_transform(blend_image.rio.transform)\
+#\
+#     # Save the composite image as a new file\
+#     output_path = 'data/spatial/mod/dc_data/PSScene4Band_DC_BlendedComposite.tif'\
+#     composite.rio.to_raster(output_path)\
+#\
+#     # Close all scene files\
+#     for scene in scenes:\
+#         scene.close()\
+#\
+#\
+# # Apply the normalization to the SR images\
+# scale_psscene(pssimgs,roi,epsg)\
+# # Apply the color balancing workflow\
+# rn_imgs = glob('data/spatial/mod/dc_data/PSScene4Band-PSSD/*_SR_RN.tif')\
+# color_blending_psscenes(rn_imgs)\
+#\
+# # Finally, blend and composite the scenes\
+# cb_imgs = glob('data/spatial/mod/dc_data/PSScene4Band-PSSD/*/*_SR_RN_CB.tif')\
+# balance_composite(cb_imgs)\
+#\
+# print("Process finished ...")\
+# print("--- %s seconds ---" % (time.time() - start_time))\
+#\
+#\
+#\
+#\
+#\
+#\
+#\
+#\
+\
+\
+\
+\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf12 \cb13 # # Create the train/test points\
+# train_gdf, test_gdf = [], []\
+# \
+# ts = 0.6\
+# vs = 0.4\
+# \
+# # Handle 'bad' classes\
+# bad_classes = ['','BU','OT']\
+# \
+# for cl in gdf.class_code.unique():\
+#     print(cl)\
+# \
+#     if cl in bad_classes:\
+#         print(f'Skipping \{cl\} class')\
+#         continue\
+# \
+#     _gdf = gdf.loc[gdf.class_code == cl]\
+# \
+#     # skip small sample size\
+#     if _gdf.shape[0] < 10:\
+#         print(f'Class \{cl\} has shape \{_gdf.shape\} ... skipping ...')\
+#         continue\
+# \
+#     _train, _test = train_test_split(_gdf, random_state=27, test_size=ts)\
+#     train_gdf.append(_train)  # 60%\
+#     test_gdf.append(_test)  # 40%\
+# \
+# # Concatenate the train/test data\
+# all_train = pd.concat(train_gdf)\
+# all_test = pd.concat(test_gdf)\
+\
+\
+#################################\
+# Generate the Spectral Library #\
+#################################\
+\
+
+\f0\i0 \cf14 epsg \cf15 = \cf16 32618\
+\
+\cf14 planet_imgs \cf15 = \cf17 glob\cf18 (\cf19 'data/spatial/raw/dc_data/planet-data/PSScene4Band-PSSD/*/*/*_SR.tiff'\cf18 )\
+
+\f1\i \cf20 print
+\f0\i0 \cf18 (\cf14 planet_imgs\cf18 )\
+\
+\cf14 vals \cf15 = \cf17 img_vals_at_pts\cf18 (\cf14 planet_imgs\cf18 , \cf14 all_train\cf18 .\cf17 to_crs\cf18 (\cf14 epsg\cf18 ))\
+\
+\
+\
+
+\f1\i \cf12 # vnir_cols = [f'vnir_\{i\}' for i in range(1,5)]\
+#\
+# for i,vw in enumerate(vnir_cols):\
+#     all_train[vw] = np.array(vals)[:,i]/10000\
+\
+# # Check up on the multiprocessing environment\
+# method = get_start_method()\
+# print(method)\
+#\
+# # Run in parallel to grab the band values by class\
+# t0 = time()\
+#\
+# # set up the parallel processing\
+# if __name__ == '__main__':\
+#     set_start_method('fork')\
+#     print(get_start_method())\
+#\
+#     # create a shared lock\
+#     lock = Lock()\
+#\
+#     nproc = max(mp.cpu_count()-2, 2)\
+#     print(f'using \{nproc\} processes')\
+#\
+#     # process in parallel\
+#     with mp.Pool() as pool:\
+#         vals = pool.map(\
+#             partial(sample_many_planet_images, planet_files=planet_imgs),\
+#             all_train.to_crs(epsg).geometry\
+#         )\
+#\
+#     # close the pool\
+#     pool.close()\
+#     pool.join()\
+#     pool = None\
+#\
+#     t1 = time()\
+#     print(f'\{(t1-t0)/60\} minutes')\
+#\
+# else:\
+#     print("Name is not main idk ...")\
+\
+\
+########################################\
+# Implementation of the MESMA workflow #\
+########################################\
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+\cf7 \cb3 \
+\pard\tx560\tx1120\tx1680\tx2240\tx2800\tx3360\tx3920\tx4480\tx5040\tx5600\tx6160\tx6720\pardirnatural\partightenfactor0
+
+\f0\i0 \cf5 \cb3 \
+}

@@ -1,3 +1,13 @@
+# Custom ignores (user)
+*/archive/*
+archive/*
+*.DS_Store
+*data/*
+*qgis/*
+*.qgz
+*.tif
+*results/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
