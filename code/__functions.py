@@ -3,9 +3,6 @@
 Supporting functions for the OPP rooftop materials mapping project
 
 List of functions:
-
-
-
 """
 
 import numpy as np
@@ -15,6 +12,8 @@ from osgeo import osr
 from functools import reduce
 import xarray as xr
 from rasterstats import zonal_stats
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 
 def print_raster(raster,open_file):
@@ -34,9 +33,33 @@ def print_raster(raster,open_file):
         f"sum: {img.sum().item()}\n"
         f"CRS: {img.rio.crs}\n"
         f"NoData: {img.rio.nodata}"
-        f"Array: {img}"
     )
     del img
+
+
+def band_correlations(da_in, out_png):
+    """ Returns a correlation plot """
+    # Convert to a numpy array and test band correlations
+    image_np = da_in.values
+    # Reshape the data to (bands, pixels)
+    bands, height, width = image_np.shape
+    image_np_t = image_np.reshape(bands, -1).T  # Transpose to get shape (pixels, bands)
+    # Create a mask for non-NaN values
+    valid_mask = ~np.isnan(image_np_t).any(axis=1)
+    # Handle NaN for the correlation matrix
+    image_np_tm = image_np_t[valid_mask]
+    # Calculate the correlation matrix
+    cor_mat_tm = np.corrcoef(image_np_tm, rowvar=False)
+
+    # Plot the correlation matrix
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cor_mat_tm, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title('Band Correlation Matrix')
+    plt.savefig(out_png, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # Clean up
+    del image_np, image_np_t, image_np_tm, valid_mask, cor_mat_tm
 
 
 def get_coords(frame):
@@ -121,6 +144,7 @@ def mnf_transform(data_arr,n_components=3,nodata=-9999):
     """
     arr = data_arr.copy().transpose()
     arr[arr == nodata] = 0  # Remap any lingering NoData values
+
     # Apply the Minimum Noise Fraction (MNF) rotation
     mnf = noise.MNF()
     mnf_arr = mnf.apply(arr)
