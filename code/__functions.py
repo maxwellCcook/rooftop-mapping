@@ -102,6 +102,52 @@ def array_to_tif(arr, ref, out_path, dtype, clip=False, shp=None):
     return out_arr
 
 
+# Function to sample raster values to points for multi-band image
+def img_vals_at_pts(img, points, band_names):
+    desc = list(img.descriptions)
+    coord_list = [(x, y) for x, y in zip(points["geometry"].x, points["geometry"].y)]
+    n_bands = img.count
+    print(f"Number of bands to process: {n_bands}")
+    for i in range(0,n_bands):
+        band = desc[i]
+        print(str(i)+'_'+band)
+        points[f"{band}"] = [x for x in img.sample(coord_list, indexes=i+1)]
+    points_df = points.reset_index()
+    points_df[desc] = points_df[band_names].astype(np.float32)
+    return points_df
+
+
+# Zonal statistics function for image data and polygons
+
+def img_vals_in_poly(img_path, polys, band_names, nodataval, stat='mean'):
+    # Create a copy of the polygons to store the results
+    stats_df = polys.copy()
+
+    # Calculate the number of cores to use, reserving 2 cores
+    num_cores = os.cpu_count()
+    if num_cores is not None:  # os.cpu_count() can return None
+        max_workers = max(1, num_cores - 1)  # Reserve 2 cores, but ensure at least 1 worker
+    else:
+        max_workers = 1  # Default to 1 worker if os.cpu_count() is None
+
+    # Set up parallel processing
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for band, band_name in enumerate(band_names, start=1):
+            futures.append(executor.submit(compute_band_stats, band, img_path, polys, stat, nodataval))
+
+        for future in futures:
+            result = future.result()
+            band = list(result.keys())[0]
+            stats_df[f'band_{band}'] = result[band]
+
+    # Optionally, rename columns based on band names
+    band_name_mapping = {f'band_{i + 1}': name for i, name in enumerate(band_names)}
+    stats_df.rename(columns=band_name_mapping, inplace=True)
+
+    return stats_df
+
+
 def pixel_to_xy(pixel_pairs, gt=None, wkt=None, path=None, dd=False):
     """
     Modified from code by Zachary Bears (zacharybears.com/using-python-to-
