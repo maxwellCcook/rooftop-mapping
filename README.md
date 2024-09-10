@@ -1,2 +1,2 @@
 # opp-rooftop-mapping
- Classifying roof material types from PlanetScope SuperDove imagery and machine learning.
+ Classifying roof material types from PlanetScope SuperDove imagery.
