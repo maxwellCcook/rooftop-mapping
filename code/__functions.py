@@ -4,16 +4,20 @@ Supporting functions for the OPP rooftop materials mapping project
 List of functions:
 """
 
-import os, sys, time
+import os
 import numpy as np
+import pandas as pd
 import rioxarray as rxr
 import pysptools.noise as noise
 import geopandas as gpd
 import xarray as xr
 import matplotlib.pyplot as plt
 import seaborn as sns
-import rasterio as rio
 import multiprocessing as mp
+
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
+from sklearn.neighbors import KDTree
 
 from functools import reduce
 from rasterstats import zonal_stats
@@ -21,6 +25,7 @@ from osgeo import osr
 
 import warnings
 warnings.filterwarnings("ignore", message="'GeoDataFrame.swapaxes' is deprecated")
+warnings.filterwarnings("ignore", message="Setting nodata to -999; specify nodata explicitly", category=UserWarning)
 
 
 def print_raster(raster, open_file):
@@ -176,6 +181,119 @@ def min_dist_sample(gdf, min_distance):
     return gdf.iloc[list(indices_to_keep)]
 
 
+class BandStatistics:
+    """
+    Class to handle sampling multi-band imagery at geometries in multiprocessing
+    """
+    def __init__(self, geom_path, raster_path, unique_id):
+        """
+        Initializes the BandStatistics object.
+        Args:
+            geom_path: Path to the input geospatial containing geometries
+            raster_path: Path to the multi-band raster stack
+        """
+        # Load the geometries
+        self.geometries = gpd.read_file(geom_path)  # Load the geometries
+        # Load the raster data array
+        self.raster = rxr.open_rasterio(raster_path)  # Use Dask chunking for efficient loading
+        self.bands = self.raster.shape[0]  # Get the number of bands from the shape of the data
+        self.nodataval = self.raster.rio.nodata  # Handle NoData values
+        self.band_desc = list(self.raster.long_name)  # Get band descriptions or indices from the dataset
+        self.band_num = list(self.raster.band.values)
+        print(f"Raster contains {self.bands} bands: {self.band_desc}")
+
+        self.id_col = str(unique_id)  # the unique identifier for geometries
+
+    def compute_band_stats(self, geom_da, band_da, band, stat):
+        """
+        Computes band statistics for a single geometry or point for a specific band.
+
+        Args:
+            geom_da: geometry chunks for processing
+            band_da: The raster band numpy array
+            band: ...
+            stat: statistic to be used (e.g., 'mean', 'median')
+        """
+        affine = self.raster.rio.transform()
+
+        if geom_da.geometry.geom_type.isin(['Polygon', 'MultiPolygon']).all():
+            # print(f'Processing polygon geometries for band {self.band_desc[band - 1]}.')
+            stats = zonal_stats(
+                geom_da[[self.id_col, 'geometry']],
+                band_da,
+                affine=affine,
+                stats=[stat],
+                all_touched=True,
+                nodata=self.nodataval,
+                geojson_out=True  # Retain original attributes in the output
+            )
+            # Convert the list of dicts to a DataFrame, extract properties
+            stats_df = pd.DataFrame(stats)
+            # Tidy the columns
+            stats_df[self.id_col] = stats_df['properties'].apply(lambda x: x.get(self.id_col))
+            stats_df[stat] = stats_df['properties'].apply(lambda x: x.get(stat))
+            stats_df = stats_df[[self.id_col, stat]]
+            # Rename the band statistic column
+            stats_df.rename(columns={stat: f'{self.band_desc[band - 1]}'}, inplace=True)
+
+            return stats_df
+
+        else:
+            # print(f'Processing point geometries for band {self.band_desc[band - 1]}.')
+            coord_list = [(x, y) for x, y in zip(geom_da.geometry.x, geom_da.geometry.y)]
+            points_values = [band_da.rio.sample([coord]) for coord in coord_list]
+            stats_df = geom_da.copy()
+            stats_df[self.band_desc[band - 1]] = points_values
+
+            return stats_df
+
+    def process_chunk(self, chunk, stat):
+        """
+        Processes a chunk of geometries for band statistics across all bands.
+
+        Args:
+            chunk: A subset of the geometries to process
+            stat: Which statistic to be used
+        """
+        results = None  # Initialize as None to handle merging
+
+        for band in range(1, self.bands + 1):  # Iterate over each band
+            band_data = self.raster.sel(band=band).values  # Convert to numpy array
+            stats = self.compute_band_stats(chunk, band_data, band, stat)  # Process entire chunk at once
+
+            # Merge the statistics for each band on the unique identifier (uid)
+            if results is None:
+                results = stats  # Initialize with the first band's stats
+            else:
+                results = results.merge(stats, on=self.id_col, how='left')  # Merge on uid
+
+        return results
+
+    def parallel_compute_stats(self, stat):
+        """
+        Parallelizes the band statistics computation for all geometries across all bands.
+        Automatically sets the number of workers to the number of available CPU cores minus one.
+
+        Args:
+            stat: The statistic to compute (e.g., 'mean', 'median', etc.)
+        """
+        # Get the number of CPU cores and set workers to one less than available cores
+        num_workers = max(1, os.cpu_count() - 1)
+        print(f"Using {num_workers} workers.")
+
+        # Split geometries into chunks for parallel processing
+        chunks = np.array_split(self.geometries, num_workers)
+
+        # Parallel processing using multiprocessing Pool
+        with mp.Pool(processes=num_workers) as pool:
+            results = pool.starmap(self.process_chunk, [(chunk, stat) for chunk in chunks])
+
+        # Flatten the list of results and convert to DataFrame
+        results_df = pd.concat(results, ignore_index=True)
+
+        return results_df
+
+
 def get_coords(frame):
     xy = frame.geometry.xy
     x = xy[0].tolist()
@@ -214,182 +332,6 @@ def array_to_tif(arr, ref, out_path, dtype, clip=False, shp=None):
     print(f"Successfully exported array to '{out_path}'")
 
     return out_arr
-
-
-# Function to sample raster values to points for multi-band image
-def img_vals_at_pts(img, points, band_names):
-    desc = list(img.descriptions)
-    coord_list = [(x, y) for x, y in zip(points["geometry"].x, points["geometry"].y)]
-    n_bands = img.count
-    print(f"Number of bands to process: {n_bands}")
-    for i in range(0, n_bands):
-        band = desc[i]
-        print(str(i) + '_' + band)
-        points[f"{band}"] = [x for x in img.sample(coord_list, indexes=i + 1)]
-    points_df = points.reset_index()
-    points_df[desc] = points_df[band_names].astype(np.float32)
-    return points_df
-
-
-# Zonal statistics function for image data and polygons
-
-def img_vals_in_poly(img_path, polys, band_names, nodataval, stat='mean'):
-    # Create a copy of the polygons to store the results
-    stats_df = polys.copy()
-
-    # Calculate the number of cores to use, reserving 2 cores
-    num_cores = os.cpu_count()
-    if num_cores is not None:  # os.cpu_count() can return None
-        max_workers = max(1, num_cores - 1)  # Reserve 2 cores, but ensure at least 1 worker
-    else:
-        max_workers = 1  # Default to 1 worker if os.cpu_count() is None
-
-    # Set up parallel processing
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for band, band_name in enumerate(band_names, start=1):
-            futures.append(executor.submit(compute_band_stats, band, img_path, polys, stat, nodataval))
-
-        for future in futures:
-            result = future.result()
-            band = list(result.keys())[0]
-            stats_df[f'band_{band}'] = result[band]
-
-    # Optionally, rename columns based on band names
-    band_name_mapping = {f'band_{i + 1}': name for i, name in enumerate(band_names)}
-    stats_df.rename(columns=band_name_mapping, inplace=True)
-
-    return stats_df
-
-
-def sample_image_da(img_path, geom, stat='mean'):
-    """
-    """
-    # Sample the image at each geometry
-    # Create a copy of the polygons to store the results
-    stats_df = geom.copy()
-
-    # Number of bands to be processed
-    n_bands = img.count
-    band_names = img.long_name
-    nodataval = img.nodata
-
-    # Calculate the number of cores to use, reserving 2 cores
-    num_cores = os.cpu_count()
-    if num_cores is not None:  # os.cpu_count() can return None
-        max_workers = max(1, num_cores - 1)  # Reserve 2 cores, but ensure at least 1 worker
-    else:
-        max_workers = 1  # Default to 1 worker if os.cpu_count() is None
-
-    # Set up parallel processing
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        futures = []
-        for band, band_name in zip(n_bands, band_names):
-            print(f"Processing for {band}.")
-            futures.append(executor.submit(compute_band_stats, band, img_path, geom, stat, nodataval))
-
-        for future in futures:
-            result = future.result()
-            band = list(result.keys())[0]
-            stats_df[f'band_{band}'] = result[band]
-
-    # Optionally, rename columns based on band names
-    band_name_mapping = {f'band_{i + 1}': name for i, name in enumerate(band_names)}
-    stats_df.rename(columns=band_name_mapping, inplace=True)
-
-    return stats_df
-
-
-class BandStatistics:
-    """
-    Class to handle sampling multi-band imagery at geometries in multiprocessing
-    """
-    def __init__(self, geom_path, raster_path, nodataval=None):
-        """
-        Initializes the BandStatistics object.
-        Args:
-            geom_path: Path to the input geospatial containing geometries
-            raster_path: Path to the multi-band raster stack
-            nodataval: No Data value in the raster (optional, if None will be taken from metadata)
-        """
-        # Load the geometries
-        self.geometries = gpd.read_file(geom_path)  # Load the geometries
-        # Load the raster data array
-        self.raster = rxr.open_rasterio(raster_path)  # Use Dask chunking for efficient loading
-        self.bands = self.raster.shape[0]  # Get the number of bands from the shape of the data
-        self.nodataval = nodataval if nodataval is not None else self.raster.rio.nodata  # Handle NoData values
-        self.band_desc = list(self.raster.long_name)  # Get band descriptions or indices from the dataset
-        print(f"Raster contains {self.bands} bands: {self.band_desc}")
-
-    def compute_band_stats(self, band_da, stat):
-        """
-        Computes band statistics for a single geometry or point for a specific band.
-
-        Args:
-            geom: Geometry from which to sample image data
-            band: The raster band number (1-indexed)
-            stat: Which statistic to be used (e.g., 'mean', 'median')
-        """
-        if self.geometries.geometry.geom_type in ['Polygon', 'MultiPolygon']:
-            print(f'Processing geometries of type: {self.geometries.geometry.geom_type}')
-            # Compute zonal statistics using rasterstats
-            stats = zonal_stats(
-                self.geometries,
-                band_da,  # Pass the specific band data as a numpy array
-                stats=[stat],
-                all_touched=True,
-                nodata=self.nodataval,
-                geojson_out=False
-            )
-            return {self.band_desc[band_da - 1]: [feature[stat] for feature in stats]}
-        else:
-            print(f'Processing geometries of type: {self.geometries.geometry.geom_type}')
-            coord_list = [(x, y) for x, y in zip(self.geometries.geometry.x, self.geometries.geometry.y)]
-            points_values = [self.raster.sel(band=band).rio.sample([coord]) for coord in coord_list]
-            points_df = self.geometries.copy()  # Assuming geom is a GeoDataFrame
-            points_df[self.band_desc[band - 1]] = points_values
-            return points_df
-
-    def process_chunk(self, geometries_chunk, stat):
-        """
-        Processes a chunk of geometries for band statistics across all bands.
-
-        Args:
-            geometries_chunk: A subset of the geometries to process
-            stat: Which statistic to be used
-        """
-        results = []
-        for geom in geometries_chunk:
-            band_stats = {}
-            for band in range(1, self.bands + 1):  # Iterate over each band
-                band_data = self.raster.sel(band=band).values  # Convert to numpy array
-                result = self.compute_band_stats(band_data, stat)
-                band_stats.update(result)  # Combine results for each band
-            results.append(band_stats)
-        return results
-
-    def parallel_compute_stats(self, stat):
-        """
-        Parallelizes the band statistics computation for all geometries across all bands.
-        Automatically sets the number of workers to the number of available CPU cores minus one.
-
-        Args:
-            stat: The statistic to compute (e.g., 'mean', 'median', etc.)
-        """
-        # Get the number of CPU cores and set workers to one less than available cores
-        num_workers = max(1, os.cpu_count() - 1)
-        print(f"Using {num_workers} workers.")
-
-        # Split geometries into chunks for parallel processing
-        chunks = np.array_split(self.geometries, num_workers)
-
-        # Parallel processing using multiprocessing Pool
-        with mp.Pool(processes=num_workers) as pool:
-            results = pool.starmap(self.process_chunk, [(chunk, stat) for chunk in chunks])
-
-        # Combine the results from all processes
-        combined_results = [item for sublist in results for item in sublist]
-        return combined_results
 
 
 def pixel_to_xy(pixel_pairs, gt=None, wkt=None, path=None, dd=False):
