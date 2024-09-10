@@ -1,29 +1,36 @@
-
 """
 Supporting functions for the OPP rooftop materials mapping project
 
 List of functions:
 """
 
+import os, sys, time
 import numpy as np
 import rioxarray as rxr
 import pysptools.noise as noise
-from osgeo import osr
-from functools import reduce
+import geopandas as gpd
 import xarray as xr
-from rasterstats import zonal_stats
 import matplotlib.pyplot as plt
 import seaborn as sns
+import rasterio as rio
+import multiprocessing as mp
+
+from functools import reduce
+from rasterstats import zonal_stats
+from osgeo import osr
+
+import warnings
+warnings.filterwarnings("ignore", message="'GeoDataFrame.swapaxes' is deprecated")
 
 
-def print_raster(raster,open_file):
+def print_raster(raster, open_file):
     """
     :param raster: input raster file
     :param open_file: should the file be opened or not
     :return: print statement with raster information
     """
     if open_file is True:
-        img = rxr.open_rasterio(raster,masked=True).squeeze()
+        img = rxr.open_rasterio(raster, masked=True).squeeze()
     else:
         img = raster
     print(
@@ -60,6 +67,113 @@ def band_correlations(da_in, out_png):
 
     # Clean up
     del image_np, image_np_t, image_np_tm, valid_mask, cor_mat_tm
+
+
+def balance_sampling(df, ratio=5, strategy='undersample'):
+    """
+    Generate balanced sample from training data based on the defined ratio.
+    This can be done with majority undersampling or minority oversampling ('strategy' parameter)
+    Args:
+        - df: the dataframe with rows as training data
+        - ratio: the sampling ration (i.e., 5:1 for minority classes default)
+    Returns:
+        - random sample with class ratios as defined
+    """
+
+    # Get the class counts
+    class_counts = df['class_code'].value_counts()
+    min_class_count = class_counts.min()
+
+    # Calculate the target count for each class based on the ratio
+    target_count = {
+        class_label: max(min_class_count, min(min_class_count * ratio, len(df[df['class_code'] == class_label])))
+        for class_label in class_counts.index
+    }
+
+    # Create an empty list to store balanced dataframes
+    balanced_dfs = []
+    for class_label in class_counts.index:
+        class_df = df[df['class_code'] == class_label]
+        if strategy == 'undersample':
+            # Under-sample the majority class, but do not undersample below its original count
+            balanced_class_df = resample(
+                class_df, replace=False, n_samples=target_count[class_label], random_state=42)
+        elif strategy == 'oversample':
+            # Over-sample the minority class
+            balanced_class_df = resample(
+                class_df, replace=True, n_samples=target_count[class_label], random_state=42)
+        balanced_dfs.append(balanced_class_df)
+
+    # Concatenate the results by class
+    balanced_df = pd.concat(balanced_dfs)
+    return balanced_df
+
+
+def split_training_data(gdf, ts, vs):
+    """
+    Splits dataframe into train, test, and validation samples with the defined ratios
+    Args:
+        - gdf: training samples (geo data frame)
+        - ts: test size #
+        - vs: validation size #
+    Returns:
+        train, test, and validation dataframes
+    """
+
+    train_df, test_df, val_df = [], [], []
+
+    for cl in gdf.class_code.unique():
+        # subset to class
+        _gdf = gdf.loc[gdf.class_code == cl]
+
+        # get train and test validation arrays.
+        # test array is validation array split in half.
+        _train, _valtest = train_test_split(_gdf, random_state=27, test_size=ts)
+        train_df.append(_train)
+
+        _val, _test = train_test_split(_valtest, random_state=27, test_size=vs)
+        test_df.append(_test)
+        val_df.append(_val)
+
+    # Concatenate the samples across classes
+    all_train_df = pd.concat(train_df)
+    all_train_df = gpd.GeoDataFrame(all_train_df, crs=gdf.crs)
+
+    all_val_df = pd.concat(val_df)
+    all_val_df = gpd.GeoDataFrame(all_val_df, crs=gdf.crs)
+
+    all_test_df = pd.concat(test_df)
+    all_test_df = gpd.GeoDataFrame(all_test_df, crs=gdf.crs)
+
+    return all_train_df, all_val_df, all_test_df
+
+
+def min_dist_sample(gdf, min_distance):
+    """
+    Filters the GeoDataFrame to ensure samples are at least min_distance apart.
+
+    Args:
+        gdf: GeoDataFrame containing 'geometry' column.
+        min_distance: Minimum distance between samples in the same units as the geometry.
+
+    Returns:
+        Filtered GeoDataFrame.
+    """
+    coords = np.array([[geom.centroid.x, geom.centroid.y] for geom in gdf.geometry])
+    tree = KDTree(coords)
+    indices_to_keep = set(range(len(gdf)))
+
+    for i in range(len(gdf)):
+        if i not in indices_to_keep:
+            continue
+        indices = tree.query_radius([coords[i]], r=min_distance)[0]
+        for index in indices:
+            if index != i:
+                indices_to_keep.discard(index)
+
+    del coords, tree, indices
+
+    return gdf.iloc[list(indices_to_keep)]
 
 
 def get_coords(frame):
@@ -108,10 +222,10 @@ def img_vals_at_pts(img, points, band_names):
     coord_list = [(x, y) for x, y in zip(points["geometry"].x, points["geometry"].y)]
     n_bands = img.count
     print(f"Number of bands to process: {n_bands}")
-    for i in range(0,n_bands):
+    for i in range(0, n_bands):
         band = desc[i]
-        print(str(i)+'_'+band)
-        points[f"{band}"] = [x for x in img.sample(coord_list, indexes=i+1)]
+        print(str(i) + '_' + band)
+        points[f"{band}"] = [x for x in img.sample(coord_list, indexes=i + 1)]
     points_df = points.reset_index()
     points_df[desc] = points_df[band_names].astype(np.float32)
     return points_df
@@ -148,6 +262,136 @@ def img_vals_in_poly(img_path, polys, band_names, nodataval, stat='mean'):
     return stats_df
 
 
+def sample_image_da(img_path, geom, stat='mean'):
+    """
+    """
+    # Sample the image at each geometry
+    # Create a copy of the polygons to store the results
+    stats_df = geom.copy()
+
+    # Number of bands to be processed
+    n_bands = img.count
+    band_names = img.long_name
+    nodataval = img.nodata
+
+    # Calculate the number of cores to use, reserving 2 cores
+    num_cores = os.cpu_count()
+    if num_cores is not None:  # os.cpu_count() can return None
+        max_workers = max(1, num_cores - 1)  # Reserve 2 cores, but ensure at least 1 worker
+    else:
+        max_workers = 1  # Default to 1 worker if os.cpu_count() is None
+
+    # Set up parallel processing
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = []
+        for band, band_name in zip(n_bands, band_names):
+            print(f"Processing for {band}.")
+            futures.append(executor.submit(compute_band_stats, band, img_path, geom, stat, nodataval))
+
+        for future in futures:
+            result = future.result()
+            band = list(result.keys())[0]
+            stats_df[f'band_{band}'] = result[band]
+
+    # Optionally, rename columns based on band names
+    band_name_mapping = {f'band_{i + 1}': name for i, name in enumerate(band_names)}
+    stats_df.rename(columns=band_name_mapping, inplace=True)
+
+    return stats_df
+
+
+class BandStatistics:
+    """
+    Class to handle sampling multi-band imagery at geometries in multiprocessing
+    """
+    def __init__(self, geom_path, raster_path, nodataval=None):
+        """
+        Initializes the BandStatistics object.
+        Args:
+            geom_path: Path to the input geospatial containing geometries
+            raster_path: Path to the multi-band raster stack
+            nodataval: No Data value in the raster (optional, if None will be taken from metadata)
+        """
+        # Load the geometries
+        self.geometries = gpd.read_file(geom_path)  # Load the geometries
+        # Load the raster data array
+        self.raster = rxr.open_rasterio(raster_path)  # Use Dask chunking for efficient loading
+        self.bands = self.raster.shape[0]  # Get the number of bands from the shape of the data
+        self.nodataval = nodataval if nodataval is not None else self.raster.rio.nodata  # Handle NoData values
+        self.band_desc = list(self.raster.long_name)  # Get band descriptions or indices from the dataset
+        print(f"Raster contains {self.bands} bands: {self.band_desc}")
+
+    def compute_band_stats(self, band_da, stat):
+        """
+        Computes band statistics for a single geometry or point for a specific band.
+
+        Args:
+            geom: Geometry from which to sample image data
+            band: The raster band number (1-indexed)
+            stat: Which statistic to be used (e.g., 'mean', 'median')
+        """
+        if self.geometries.geometry.geom_type in ['Polygon', 'MultiPolygon']:
+            print(f'Processing geometries of type: {self.geometries.geometry.geom_type}')
+            # Compute zonal statistics using rasterstats
+            stats = zonal_stats(
+                self.geometries,
+                band_da,  # Pass the specific band data as a numpy array
+                stats=[stat],
+                all_touched=True,
+                nodata=self.nodataval,
+                geojson_out=False
+            )
+            return {self.band_desc[band_da - 1]: [feature[stat] for feature in stats]}
+        else:
+            print(f'Processing geometries of type: {self.geometries.geometry.geom_type}')
+            coord_list = [(x, y) for x, y in zip(self.geometries.geometry.x, self.geometries.geometry.y)]
+            points_values = [self.raster.sel(band=band).rio.sample([coord]) for coord in coord_list]
+            points_df = self.geometries.copy()  # Assuming geom is a GeoDataFrame
+            points_df[self.band_desc[band - 1]] = points_values
+            return points_df
+
+    def process_chunk(self, geometries_chunk, stat):
+        """
+        Processes a chunk of geometries for band statistics across all bands.
+
+        Args:
+            geometries_chunk: A subset of the geometries to process
+            stat: Which statistic to be used
+        """
+        results = []
+        for geom in geometries_chunk:
+            band_stats = {}
+            for band in range(1, self.bands + 1):  # Iterate over each band
+                band_data = self.raster.sel(band=band).values  # Convert to numpy array
+                result = self.compute_band_stats(band_data, stat)
+                band_stats.update(result)  # Combine results for each band
+            results.append(band_stats)
+        return results
+
+    def parallel_compute_stats(self, stat):
+        """
+        Parallelizes the band statistics computation for all geometries across all bands.
+        Automatically sets the number of workers to the number of available CPU cores minus one.
+
+        Args:
+            stat: The statistic to compute (e.g., 'mean', 'median', etc.)
+        """
+        # Get the number of CPU cores and set workers to one less than available cores
+        num_workers = max(1, os.cpu_count() - 1)
+        print(f"Using {num_workers} workers.")
+
+        # Split geometries into chunks for parallel processing
+        chunks = np.array_split(self.geometries, num_workers)
+
+        # Parallel processing using multiprocessing Pool
+        with mp.Pool(processes=num_workers) as pool:
+            results = pool.starmap(self.process_chunk, [(chunk, stat) for chunk in chunks])
+
+        # Combine the results from all processes
+        combined_results = [item for sublist in results for item in sublist]
+        return combined_results
+
+
 def pixel_to_xy(pixel_pairs, gt=None, wkt=None, path=None, dd=False):
     """
     Modified from code by Zachary Bears (zacharybears.com/using-python-to-
@@ -176,12 +420,12 @@ def pixel_to_xy(pixel_pairs, gt=None, wkt=None, path=None, dd=False):
         # Translate the pixel pairs into untranslated points
         lon = point[0] * gt[1] + gt[0]
         lat = point[1] * gt[5] + gt[3]
-        xy_pairs.append((lon, lat)) # Add the point to our return array
+        xy_pairs.append((lon, lat))  # Add the point to our return array
 
     return xy_pairs
 
 
-def mnf_transform(data_arr,n_components=3,nodata=-9999):
+def mnf_transform(data_arr, n_components=3, nodata=-9999):
     """
         Applies the MNF rotation to a raster array; returns in HSI form
         (m x n x p). Arguments:
@@ -216,14 +460,14 @@ def ravel_and_filter(arr, cleanup=True, nodata=-9999):
         return arr[arr != nodata]
     # If a "single-band" image
     if len(shp) == 2:
-        arr = arr.reshape(1, shp[-2]*shp[-1]).swapaxes(0, 1)
+        arr = arr.reshape(1, shp[-2] * shp[-1]).swapaxes(0, 1)
         if cleanup:
             return arr[arr != nodata]
     # For multi-band images
     else:
-        arr = arr.reshape(shp[0], shp[1]*shp[2]).swapaxes(0, 1)
+        arr = arr.reshape(shp[0], shp[1] * shp[2]).swapaxes(0, 1)
         if cleanup:
-            return arr[arr[:,0] != nodata]
+            return arr[arr[:, 0] != nodata]
     return arr
 
 
@@ -272,7 +516,7 @@ def convex_hull_graham(points, indices=False):
         return (a > b) - (a < b)
 
     def turn(p, q, r):
-        return cmp((q[0] - p[0])*(r[1] - p[1]) - (r[0] - p[0])*(q[1] - p[1]), 0)
+        return cmp((q[0] - p[0]) * (r[1] - p[1]) - (r[0] - p[0]) * (q[1] - p[1]), 0)
 
     def keep_left(hull, r):
         while len(hull) > 1 and turn(hull[-2], hull[-1], r) != TURN_LEFT:
@@ -329,16 +573,3 @@ def partition(array, processes, axis=0):
     work_indices.append((partitions[-1][0], partitions[-1][1] + 1))
     return work_indices
 
-
-# Zonal stats for parallel
-def compute_band_stats(band, img_path, polys, stat, nodataval):
-    stats = zonal_stats(
-        polys.geometry,
-        img_path,
-        stats=[stat],
-        band_num=band,
-        all_touched=True,
-        nodata=nodataval,
-        geojson_out=True
-    )
-    return {band: [feature['properties'][stat] for feature in stats]}
