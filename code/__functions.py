@@ -337,6 +337,7 @@ def footprint_area_stats(group, pct=90):
         f'pct{pct}_longest_side': pct_longest_side
     })
 
+
 class BandStatistics:
     """
     Class to handle sampling multi-band imagery at geometries in multiprocessing
@@ -351,7 +352,7 @@ class BandStatistics:
         # Load the geometries
         self.geometries = gpd.read_file(geom_path)  # Load the geometries
         # Load the raster data array
-        self.raster = rxr.open_rasterio(raster_path)  
+        self.raster = rxr.open_rasterio(raster_path)
         self.bands = self.raster.shape[0]  # Get the number of bands from the shape of the data
         self.nodataval = self.raster.rio.nodata  # Handle NoData values
         self.band_desc = list(self.raster.long_name)  # Get band descriptions or indices from the dataset
