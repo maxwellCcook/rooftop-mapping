@@ -8,24 +8,136 @@ import os
 import numpy as np
 import pandas as pd
 import rioxarray as rxr
+import rasterio as rio
 import pysptools.noise as noise
 import geopandas as gpd
 import xarray as xr
 import matplotlib.pyplot as plt
 import seaborn as sns
 import multiprocessing as mp
+import torch
 
-from sklearn.model_selection import train_test_split
-from sklearn.utils import resample
 from sklearn.neighbors import KDTree
-
 from functools import reduce
 from rasterstats import zonal_stats
 from osgeo import osr
+from torch.utils.data import Dataset
+from sklearn.model_selection import train_test_split
+from sklearn.utils import resample
 
 import warnings
 warnings.filterwarnings("ignore", message="'GeoDataFrame.swapaxes' is deprecated")
 warnings.filterwarnings("ignore", message="Setting nodata to -999; specify nodata explicitly", category=UserWarning)
+
+
+class RoofImageDatasetPlanet(Dataset):
+    """Class to handle PlanetScope SuperDove imagery for Resnet-18"""
+
+    def __init__(self, gdf, img_path, n_bands, img_dim, transform=None):
+        """
+        Args:
+            gdf: Geodataframe containing 'geometry' column and 'class_code' column
+            img_path: the path to the PlanetScope SuperDove composite image (single mosaic file)
+                - see 'psscene-prep.py' for spectral indices calculation
+            imgdim (int): Image dimension for CNN implementation
+            transform (callable, optional): Optional transform to be applied on a sample
+
+        Returns image chunks with class labels
+        """
+
+        if not os.path.exists(img_path):
+            raise ValueError(f'Image does not exists: {img_path}')
+
+        self.geometries = [p.centroid for p in gdf.geometry.values]  # gather centroid geoms
+        self.img_path = img_path  # path to image data
+        self.img_dim = img_dim  # resnet window dimension, defaults to 64
+        self.n_bands = n_bands  # number of bands in the input image
+        self.Y = gdf.code.values  # class codes (numeric)
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.geometries)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+
+        # Get the geometry of the idx (centroid)
+        geom = self.geometries[idx]
+
+        try:
+            sample = self.sample_image(geom)  # run the sampling function
+
+            cc = self.Y[idx]  # get the class codes
+            if type(cc) != int:
+                cc = cc.astype('uint8')  # make sure the cc is an integer
+
+            # Ensure the sample has the correct dimensions
+            assert sample.shape == (self.n_bands, self.img_dim, self.img_dim), f'Invalid sample shape: {sample.shape}'
+
+            if self.transform:
+                sample = self.transform(sample)
+
+        except Exception as e:
+            raise ValueError(e)
+            print(f"Skipping invalid sample at index: {idx}")
+            sample = torch.from_numpy(np.zeros((self.n_bands, int(self.img_dim), int(self.img_dim))))
+            cc = 255  # highest int8 number to be flagged
+
+        # Convert the sample array to a Torch object
+        sample = torch.from_numpy(sample)
+
+        # Return the sample and the label as torch objects
+        return {'image': sample.type(torch.FloatTensor),
+                'code': torch.tensor(cc).type(torch.LongTensor)}
+
+    def sample_image(self, geom):
+        """ Sample the image at each geometry for the specified image chunk size (window) """
+
+        N = self.img_dim  # window size to be used for cropping
+
+        # Use the windows.from_bounds() method to return the window
+        # Returns image chunks from training data locations
+        with rio.open(self.img_path) as src:
+            py, px = src.index(geom.x, geom.y)
+            window = rio.windows.Window(px - N // 2, py - N // 2, N, N)
+            # print(window)
+
+            # Read the data in the window
+            # clip is a nbands * N * N numpy array
+            clip = src.read(window=window, indexes=list(range(1, self.n_bands + 1)))
+
+            del py, px, window  # clean up
+
+        # Convert the image chunk to a numpy array
+        clip_arr = np.array(clip)
+
+        # Check if the image chunk has valid data
+        if clip_arr.sum() > 0:
+            # Mask invalid values in each band independently
+            ans = np.ma.masked_equal(clip_arr, 0).filled(0)
+        else:
+            ans = clip_arr
+
+        del clip, clip_arr  # clean up
+        return ans
+
+
+def make_good_batch(batch):
+    """
+    Removes bad samples if image dimensions do not match.
+    Args:
+        - batch: list of dictionaries, each containing 'image' tensor and 'code' tensor
+    returns: list of dictionaries same as input with samples having non-matching image dims removed
+    """
+
+    _idx = torch.where(batch['code'] != 255)[0]  # good batches
+
+    new_batch = {}
+    new_batch['image'] = batch['image'][_idx]
+    new_batch['code'] = batch['code'][_idx]
+
+    return new_batch
 
 
 def print_raster(raster, open_file):
@@ -180,6 +292,50 @@ def min_dist_sample(gdf, min_distance):
 
     return gdf.iloc[list(indices_to_keep)]
 
+
+def calc_longest_side(geom):
+    """ Calculate the longest side length of a polygon """
+    # Get the minimum rotated rectangle (bounding box)
+    min_rect = geom.minimum_rotated_rectangle
+    coords = list(min_rect.exterior.coords)  # coordinate bounds
+
+    # Calculate the distances between consecutive rectangle vertices
+    side_lens = [np.linalg.norm(np.array(coords[i]) - np.array(coords[i - 1])) for i in range(1, len(coords))]
+
+    mean_side_length = np.mean(side_lens)
+    std_side_length = np.std(side_lens)
+    longest_side_length = max(side_lens)
+
+    # Return the longest side
+    return mean_side_length, std_side_length, longest_side_length
+
+
+def footprint_area_stats(group, pct=90):
+    """ computes footprint stats based on the area and shape """
+    # Get the average footprint area (m2) and side length (m)
+    mean_area = group['areaUTMsqft'].mean() * 0.092903
+    # Get the Nth percentile building area and side length
+    pct_area = np.percentile(group['areaUTMsqft'], pct) * 0.092903  # Convert sqft to sqm
+
+    # Calculate the longest side for each polygon in the group (mean, std, max)
+    longest_sides = group['geometry'].apply(calc_longest_side)
+
+    # Separate the tuple into individual lists for mean, std, and max side lengths
+    mean_sides = longest_sides.apply(lambda x: x[0])
+    std_sides = longest_sides.apply(lambda x: x[1])
+    max_sides = longest_sides.apply(lambda x: x[2])
+
+    # Calculate the Nth percentile of the longest sides
+    pct_longest_side = np.percentile(max_sides, pct)
+
+    return pd.Series({
+        'mean_area': mean_area,
+        f'pct{pct}_area': pct_area,
+        'mean_side_length': mean_sides.mean(),
+        'std_side_length': std_sides.mean(),
+        'max_side_length': max_sides.max(),
+        f'pct{pct}_longest_side': pct_longest_side
+    })
 
 class BandStatistics:
     """
