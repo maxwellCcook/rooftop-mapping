@@ -23,6 +23,7 @@ from rasterstats import zonal_stats
 from osgeo import osr
 from torch.utils.data import Dataset
 from sklearn.model_selection import train_test_split
+
 from sklearn.utils import resample
 
 import warnings
@@ -449,6 +450,50 @@ class BandStatistics:
         results_df = pd.concat(results, ignore_index=True)
 
         return results_df
+
+
+def plot_example_chunks(dataset, class_mapping, num_examples=3):
+    """
+    Plots example image chunks for each class.
+
+    Args:
+    - dataset: The dataset containing the image chunks and labels.
+    - class_mapping: Dictionary mapping class codes to class labels.
+    - num_examples: Number of examples to plot for each class.
+    """
+
+    classes = list(class_mapping.keys())
+    fig, axes = plt.subplots(len(classes), num_examples, figsize=(10, 10))
+    # fig.suptitle("Example Image Chunks for Each Roof Class", fontsize=16)
+
+    for i, cls in enumerate(classes):
+        cls_indices = [j for j, x in enumerate(dataset.Y) if x == cls]
+
+        if len(cls_indices) < num_examples:
+            print(f"Not enough samples for class {cls}. Available samples: {len(cls_indices)}")
+            continue
+
+        selected_indices = np.random.choice(cls_indices, num_examples, replace=False)
+
+        for k, idx in enumerate(selected_indices):
+            sample = dataset[idx]
+            if sample is None:
+                print(f"Skipping invalid sample at index {idx}")
+                continue
+            image = sample['image'].permute(1, 2, 0).numpy()  # Change the dimensions to HWC for plotting
+
+            # Scale the image to [0, 255] range for display
+            image = (255 * (image - image.min()) / (image.max() - image.min())).astype(np.uint8)
+
+            axes[i, k].imshow(image)
+            axes[i, k].set_title(class_mapping[cls] if k == 0 else '')  # Title only on the first column
+            axes[i, k].axis('off')
+
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+
+    plt.savefig('image_chunks.png')
+    plt.show()
 
 
 def get_coords(frame):
