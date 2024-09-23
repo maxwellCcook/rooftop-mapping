@@ -17,18 +17,16 @@ import seaborn as sns
 import multiprocessing as mp
 import torch
 
+from torch.utils.data import Dataset
 from sklearn.neighbors import KDTree
+from sklearn.utils import resample
+from sklearn.model_selection import train_test_split
 from functools import reduce
 from rasterstats import zonal_stats
 from osgeo import osr
-from torch.utils.data import Dataset
-from sklearn.model_selection import train_test_split
-
-from sklearn.utils import resample
 
 import warnings
-warnings.filterwarnings("ignore", message="'GeoDataFrame.swapaxes' is deprecated")
-warnings.filterwarnings("ignore", message="Setting nodata to -999; specify nodata explicitly", category=UserWarning)
+warnings.filterwarnings("ignore")
 
 
 class RoofImageDatasetPlanet(Dataset):
@@ -141,52 +139,6 @@ def make_good_batch(batch):
     return new_batch
 
 
-def print_raster(raster, open_file):
-    """
-    :param raster: input raster file
-    :param open_file: should the file be opened or not
-    :return: print statement with raster information
-    """
-    if open_file is True:
-        img = rxr.open_rasterio(raster, masked=True).squeeze()
-    else:
-        img = raster
-    print(
-        f"shape: {img.rio.shape}\n"
-        f"resolution: {img.rio.resolution()}\n"
-        f"bounds: {img.rio.bounds()}\n"
-        f"sum: {img.sum().item()}\n"
-        f"CRS: {img.rio.crs}\n"
-        f"NoData: {img.rio.nodata}"
-    )
-    del img
-
-
-def band_correlations(da_in, out_png):
-    """ Returns a correlation plot """
-    # Convert to a numpy array and test band correlations
-    image_np = da_in.values
-    # Reshape the data to (bands, pixels)
-    bands, height, width = image_np.shape
-    image_np_t = image_np.reshape(bands, -1).T  # Transpose to get shape (pixels, bands)
-    # Create a mask for non-NaN values
-    valid_mask = ~np.isnan(image_np_t).any(axis=1)
-    # Handle NaN for the correlation matrix
-    image_np_tm = image_np_t[valid_mask]
-    # Calculate the correlation matrix
-    cor_mat_tm = np.corrcoef(image_np_tm, rowvar=False)
-
-    # Plot the correlation matrix
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cor_mat_tm, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
-    plt.title('Band Correlation Matrix')
-    plt.savefig(out_png, dpi=300, bbox_inches='tight')
-    plt.show()
-
-    # Clean up
-    del image_np, image_np_t, image_np_tm, valid_mask, cor_mat_tm
-
-
 def balance_sampling(df, ratio=5, strategy='undersample'):
     """
     Generate balanced sample from training data based on the defined ratio.
@@ -264,6 +216,52 @@ def split_training_data(gdf, ts, vs):
     all_test_df = gpd.GeoDataFrame(all_test_df, crs=gdf.crs)
 
     return all_train_df, all_val_df, all_test_df
+
+
+def print_raster(raster, open_file):
+    """
+    :param raster: input raster file
+    :param open_file: should the file be opened or not
+    :return: print statement with raster information
+    """
+    if open_file is True:
+        img = rxr.open_rasterio(raster, masked=True).squeeze()
+    else:
+        img = raster
+    print(
+        f"shape: {img.rio.shape}\n"
+        f"resolution: {img.rio.resolution()}\n"
+        f"bounds: {img.rio.bounds()}\n"
+        f"sum: {img.sum().item()}\n"
+        f"CRS: {img.rio.crs}\n"
+        f"NoData: {img.rio.nodata}"
+    )
+    del img
+
+
+def band_correlations(da_in, out_png):
+    """ Returns a correlation plot """
+    # Convert to a numpy array and test band correlations
+    image_np = da_in.values
+    # Reshape the data to (bands, pixels)
+    bands, height, width = image_np.shape
+    image_np_t = image_np.reshape(bands, -1).T  # Transpose to get shape (pixels, bands)
+    # Create a mask for non-NaN values
+    valid_mask = ~np.isnan(image_np_t).any(axis=1)
+    # Handle NaN for the correlation matrix
+    image_np_tm = image_np_t[valid_mask]
+    # Calculate the correlation matrix
+    cor_mat_tm = np.corrcoef(image_np_tm, rowvar=False)
+
+    # Plot the correlation matrix
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(cor_mat_tm, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
+    plt.title('Band Correlation Matrix')
+    plt.savefig(out_png, dpi=300, bbox_inches='tight')
+    plt.show()
+
+    # Clean up
+    del image_np, image_np_t, image_np_tm, valid_mask, cor_mat_tm
 
 
 def min_dist_sample(gdf, min_distance):
