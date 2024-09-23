@@ -201,21 +201,29 @@ def split_training_data(gdf, ts, vs):
         _train, _valtest = train_test_split(_gdf, random_state=27, test_size=ts)
         train_df.append(_train)
 
-        _val, _test = train_test_split(_valtest, random_state=27, test_size=vs)
-        test_df.append(_test)
-        val_df.append(_val)
+        if vs is not None:
+            _val, _test = train_test_split(_valtest, random_state=27, test_size=vs)
+            test_df.append(_test)
+            val_df.append(_val)
+        else:
+            # treat the validation entirely as training
+            test_df.append(_valtest)
 
     # Concatenate the samples across classes
     all_train_df = pd.concat(train_df)
     all_train_df = gpd.GeoDataFrame(all_train_df, crs=gdf.crs)
 
-    all_val_df = pd.concat(val_df)
-    all_val_df = gpd.GeoDataFrame(all_val_df, crs=gdf.crs)
-
+    # Holdout
     all_test_df = pd.concat(test_df)
     all_test_df = gpd.GeoDataFrame(all_test_df, crs=gdf.crs)
 
-    return all_train_df, all_val_df, all_test_df
+    if vs is not None:
+        all_val_df = pd.concat(val_df)
+        all_val_df = gpd.GeoDataFrame(all_val_df, crs=gdf.crs)
+    else:
+        all_val_df = None
+
+    return all_train_df, all_test_df, all_val_df
 
 
 def print_raster(raster, open_file):
