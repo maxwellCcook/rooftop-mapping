@@ -9,6 +9,7 @@ archive/*
 *results/*
 *figures/*
 *code/torchsat
+figures/Figure_Arrangements.pptx
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
