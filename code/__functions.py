@@ -509,6 +509,17 @@ def get_coords(frame):
     return [list(z) for z in zip(x, y)]
 
 
+def flatten_raster(raster):
+    """Flatten a raster to a 2D array where each row is a pixel and each column is a band."""
+    # Number of bands is the first dimension of the raster
+    bands, height, width = raster.shape
+
+    # Reshape the raster so that each row represents a pixel, and each column represents a band
+    flattened_raster = raster.values.reshape(bands, height * width).T  # Transpose to get (height*width, bands)
+
+    return flattened_raster
+
+
 def array_to_tif(arr, ref, out_path, dtype, clip=False, shp=None):
     # Save the MNF transformed data as a raster
     # Transpose the new array before exporting
