@@ -509,48 +509,72 @@ def get_coords(frame):
     return [list(z) for z in zip(x, y)]
 
 
-def flatten_raster(raster):
+def flatten_array(arr):
     """Flatten a raster to a 2D array where each row is a pixel and each column is a band."""
     # Number of bands is the first dimension of the raster
-    bands, height, width = raster.shape
-
+    bands, height, width = arr.shape
     # Reshape the raster so that each row represents a pixel, and each column represents a band
-    flattened_raster = raster.values.reshape(bands, height * width).T  # Transpose to get (height*width, bands)
+    arr_flat = arr.values.reshape(bands, height * width).T  # Transpose to get (height*width, bands)
+    return arr_flat  # return the numpy array
 
-    return flattened_raster
 
+def array_to_xrda(arr, ref_da, dtype, clip=False, export=False, out_fp=None):
+    """ Converts flattened numpy array to Xarray DataArray
+    Optionally exports as GeoTIFF
 
-def array_to_tif(arr, ref, out_path, dtype, clip=False, shp=None):
-    # Save the MNF transformed data as a raster
-    # Transpose the new array before exporting
-    in_arr = arr.transpose(2, 1, 0)
-    print(in_arr.shape)
-    # Assign the correct coordinates for the transposed 'y' dimension
-    band_coords = range(in_arr.shape[0])
-    y_coords = ref.y.values
-    x_coords = ref.x.values
-    # Store the new array and export
+    Args:
+        arr: the numpy array to be converted
+        ref_da: the reference image (xarray datarray)
+        dtype: the data type for the output image array
+        clip: (optional) clipping geometry (file path or geodataframe)
+        export: Boolean, should the array be exported as GeoTIFF
+        out_fp: the output file path if export is True
+    """
+    if arr.ndim == 2:
+        in_arr = arr
+    else:
+        in_arr = arr.transpose(2, 1, 0)  # transpose to bands, height, width
+        band_coords = range(in_arr.shape[0])  # get the band coordinates
+    print(f"\tArray of shape: {in_arr.shape}")
+
+    y_coords = ref_da.y.values  # height coordinates
+    x_coords = ref_da.x.values  # width coordinates
+
+    # Create the new Xarray DataArray
     out_arr = xr.DataArray(
         in_arr,
-        dims=("band", "y", "x"),
+        dims=("y", "x") if arr.ndim == 2 else ("band", "y", "x"),
         coords={
+            "y": y_coords,
+            "x": x_coords,
+        } if arr.ndim == 2 else {
             "band": band_coords,
             "y": y_coords,
             "x": x_coords,
         }
     )
-    # Export the new DataArray as a new GeoTIFF file
-    out_arr.rio.set_crs(ref.rio.crs)  # Set the CRS
-    out_arr.rio.write_transform(ref.rio.transform())  # Set the GeoTransform
-    if clip is True and shp is not None:
-        print("Clipping raster array ...")
-        out_arr = out_arr.rio.clip(shp.geometry)
-    out_arr.rio.to_raster(out_path, compress='zstd', zstd_level=9,
-                          dtype=dtype, driver='GTiff')  # export to GeoTIFF
 
-    print(f"Successfully exported array to '{out_path}'")
+    # Assign a coordinate reference system and transform
+    out_arr.rio.set_crs(ref_da.rio.crs)  # Set the CRS to reference data crs
+    out_arr.rio.write_transform(ref_da.rio.transform())  # Set the GeoTransform
 
-    return out_arr
+    # (optionally) clip and/or export as a GeoTIFF
+    if clip is not None:
+        print("\tClipping to shape.")
+        assert isinstance(clip, (str, gpd.GeoDataFrame)), "Error: clip is neither a (str) nor a (gpd) !"
+        if isinstance(clip, str):
+            geom = gpd.read_file(clip)
+            geom = geom.to_crs(ref_da.rio.crs)
+            out_arr = out_arr.rio.clip(geom.geometry)
+        elif isinstance(clip, gpd.GeoDataFrame):
+            out_arr = out_arr.rio.clip(clip.geometry)
+
+    if export is True:
+        out_arr.rio.to_raster(out_fp, compress='zstd', zstd_level=9, dtype=dtype, driver='GTiff')
+        print(f"Successfully exported array to '{out_fp}'")
+        return out_arr
+    else:
+        return out_arr
 
 
 def pixel_to_xy(pixel_pairs, gt=None, wkt=None, path=None, dd=False):
