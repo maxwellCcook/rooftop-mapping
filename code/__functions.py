@@ -530,11 +530,15 @@ def array_to_xrda(arr, ref_da, dtype, clip=False, export=False, out_fp=None):
         export: Boolean, should the array be exported as GeoTIFF
         out_fp: the output file path if export is True
     """
-    if arr.ndim == 2:
+    if arr.ndim == 2:  # 2D array (height, width)
         in_arr = arr
+        print(f"2D Array of shape: {in_arr.shape}")
+    elif arr.ndim == 3:  # 3D array (bands, height, width)
+        in_arr = arr.transpose(2, 1, 0)  # Transpose to (bands, height, width)
+        band_coords = range(in_arr.shape[0])  # Get the band coordinates
+        print(f"3D Array of shape: {in_arr.shape}")
     else:
-        in_arr = arr.transpose(2, 1, 0)  # transpose to bands, height, width
-        band_coords = range(in_arr.shape[0])  # get the band coordinates
+        raise ValueError("Input array must be 2D or 3D.")
     print(f"\tArray of shape: {in_arr.shape}")
 
     y_coords = ref_da.y.values  # height coordinates
