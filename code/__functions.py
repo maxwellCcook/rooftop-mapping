@@ -177,23 +177,32 @@ class UnlabeledRoofImageDataset(Dataset):
                 sample = self.transform(sample)
         except Exception as e:
             print(f"Skipping invalid sample at index: {idx}. Error: {e}")
-            sample = torch.from_numpy(np.zeros((self.n_bands, self.img_dim, self.img_dim)))
+            sample = np.zeros((self.n_bands, self.img_dim, self.img_dim))  # Empty array for bad sample
             bbox = None
-        # Return the image chunk and its bounding box
+        # Convert the sample array to a Tensor here
         return {'image': torch.from_numpy(sample).float(), 'bbox': bbox}
 
     def sample_image(self, geom):
         """Sample the image at the centroid of each footprint and return the bounding box"""
         N = self.img_dim  # Window size for image chunk
-        # Use rasterio to read the image chunk around the footprint's centroid
+
         with rio.open(self.img_path) as src:
-            py, px = src.index(geom.x, geom.y)  # Get the pixel coordinates of the centroid
-            window = rio.windows.Window(px - N // 2, py - N // 2, N, N)
-            # Read the data in the window (nbands * N * N array)
-            clip = src.read(window=window, indexes=list(range(1, self.n_bands + 1)))
-            # Get the bounding box in geographical coordinates
-            bbox = src.window_bounds(window)
-        return np.array(clip), box(*bbox)
+            try:
+                py, px = src.index(geom.x, geom.y)  # Get the pixel coordinates of the centroid
+                window = rio.windows.Window(px - N // 2, py - N // 2, N, N)
+                # Check if the window is valid (i.e., it doesn't extend outside the image bounds)
+                if window.col_off < 0 or window.row_off < 0 or (window.width <= 0 or window.height <= 0):
+                    raise ValueError("Window is outside image bounds")
+                # Read the data in the window (nbands * N * N array)
+                clip = src.read(window=window, indexes=list(range(1, self.n_bands + 1)))
+                # Get the bounding box in geographical coordinates
+                bbox = src.window_bounds(window)
+                # Check if the chunk contains valid data (e.g., not all NoData)
+                if clip.shape != (self.n_bands, N, N) or np.all(clip == 0):
+                    raise ValueError("Invalid sample or NoData in window")
+            except Exception as e:
+                raise ValueError(f"Error sampling image: {e}")
+        return np.array(clip), box(*bbox)  # Return as a numpy array and bounding box
 
 
 def initialize_resnet18(n_classes, n_channels, device, params):
