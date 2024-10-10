@@ -25,6 +25,12 @@ from functools import reduce
 from rasterstats import zonal_stats
 from osgeo import osr
 
+import torch.nn as nn
+import torch.optim as optim
+from torch.optim.lr_scheduler import ReduceLROnPlateau
+from torchsat.models.classification import resnet18
+from torch.nn.functional import softmax
+
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -129,14 +135,50 @@ def make_good_batch(batch):
         - batch: list of dictionaries, each containing 'image' tensor and 'code' tensor
     returns: list of dictionaries same as input with samples having non-matching image dims removed
     """
-
     _idx = torch.where(batch['code'] != 255)[0]  # good batches
 
-    new_batch = {}
-    new_batch['image'] = batch['image'][_idx]
-    new_batch['code'] = batch['code'][_idx]
+    new_batch = {'image': batch['image'][_idx], 'code': batch['code'][_idx]}
 
     return new_batch
+
+
+def initialize_resnet18(n_classes, n_channels, device, params):
+    """
+    Initializes the ResNet-18 model, optimizer, scheduler, scaler, and loss criterion.
+    """
+    model = resnet18(n_classes, in_channels=n_channels, pretrained=True)
+
+    # Move the model to the specified device
+    if torch.cuda.device_count() >= 1:
+        model = nn.DataParallel(model)
+        model.to(device)
+        print('\tMade GPU parallel.')
+    else:
+        model = nn.DataParallel(model)
+        model.to(device)
+        print('\tMade CPU parallel.')
+
+    learning_rate = params['learning_rate']
+    momentum = params['momentum']
+    weight_decay = params['weight_decay']
+    patience = params['patience']
+
+    # Define the optimizer, learning rate scheduler, and grad scaler
+    optimizer = optim.SGD(model.parameters(), lr=learning_rate, momentum=momentum, weight_decay=weight_decay)
+    lr_scheduler = ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=patience, min_lr=1e-6)
+    scaler = torch.cuda.amp.GradScaler()  # set grad scaler for cuda
+
+    return model, optimizer, lr_scheduler, scaler
+
+
+def make_inference(model, image_dataset):
+    """ Makes inference for image chunks """
+    return model
+
+
+def assign_probability(footprint_gdf):
+    """ Assigns average probability of roof material to footprints in an image window """
+    return footprint_gdf
 
 
 def balance_sampling(df, ratio=5, strategy='undersample'):
