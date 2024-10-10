@@ -190,18 +190,23 @@ class UnlabeledRoofImageDataset(Dataset):
             try:
                 py, px = src.index(geom.x, geom.y)  # Get the pixel coordinates of the centroid
                 window = rio.windows.Window(px - N // 2, py - N // 2, N, N)
+
                 # Check if the window is valid (i.e., it doesn't extend outside the image bounds)
                 if window.col_off < 0 or window.row_off < 0 or (window.width <= 0 or window.height <= 0):
                     raise ValueError("Window is outside image bounds")
+
                 # Read the data in the window (nbands * N * N array)
                 clip = src.read(window=window, indexes=list(range(1, self.n_bands + 1)))
                 # Get the bounding box in geographical coordinates
                 bbox = src.window_bounds(window)
+
                 # Check if the chunk contains valid data (e.g., not all NoData)
                 if clip.shape != (self.n_bands, N, N) or np.all(clip == 0):
                     raise ValueError("Invalid sample or NoData in window")
+
             except Exception as e:
                 raise ValueError(f"Error sampling image: {e}")
+
         return np.array(clip), box(*bbox)  # Return as a numpy array and bounding box
 
 
