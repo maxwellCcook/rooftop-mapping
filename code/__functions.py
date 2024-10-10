@@ -29,7 +29,7 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.optim.lr_scheduler import ReduceLROnPlateau
 from torchsat.models.classification import resnet18
-from torch.nn.functional import softmax
+from shapely.geometry import box
 
 import warnings
 warnings.filterwarnings("ignore")
@@ -142,11 +142,65 @@ def make_good_batch(batch):
     return new_batch
 
 
+class UnlabeledRoofImageDataset(Dataset):
+    """Class to handle PlanetScope SuperDove imagery for unlabeled data"""
+    def __init__(self, gdf, img_path, n_bands, img_dim, transform=None):
+        """
+        Args:
+            gdf: Geodataframe containing 'geometry' column (footprints)
+            img_path: Path to the PlanetScope SuperDove composite image (single mosaic file)
+            img_dim (int): Image dimension for CNN inference (e.g., 78x78)
+            transform (callable, optional): Optional transform to be applied on a sample
+        """
+        if not os.path.exists(img_path):
+            raise ValueError(f'Image file does not exist: {img_path}')
+
+        self.geometries = [p.centroid for p in gdf.geometry.values]  # Get centroid geometries
+        self.img_path = img_path  # Path to image data
+        self.img_dim = img_dim  # Window dimension (e.g., 78x78 pixels)
+        self.n_bands = n_bands  # Number of image bands
+        self.transform = transform
+
+    def __len__(self):
+        return len(self.geometries)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        # Get the geometry (centroid) of the footprint at index 'idx'
+        geom = self.geometries[idx]
+        try:
+            sample, bbox = self.sample_image(geom)  # Get the image chunk and bounding box
+            # Ensure the sample has the correct dimensions
+            assert sample.shape == (self.n_bands, self.img_dim, self.img_dim), f'Invalid sample shape: {sample.shape}'
+            if self.transform:
+                sample = self.transform(sample)
+        except Exception as e:
+            print(f"Skipping invalid sample at index: {idx}. Error: {e}")
+            sample = torch.from_numpy(np.zeros((self.n_bands, self.img_dim, self.img_dim)))
+            bbox = None
+        # Return the image chunk and its bounding box
+        return {'image': torch.from_numpy(sample).float(), 'bbox': bbox}
+
+    def sample_image(self, geom):
+        """Sample the image at the centroid of each footprint and return the bounding box"""
+        N = self.img_dim  # Window size for image chunk
+        # Use rasterio to read the image chunk around the footprint's centroid
+        with rio.open(self.img_path) as src:
+            py, px = src.index(geom.x, geom.y)  # Get the pixel coordinates of the centroid
+            window = rio.windows.Window(px - N // 2, py - N // 2, N, N)
+            # Read the data in the window (nbands * N * N array)
+            clip = src.read(window=window, indexes=list(range(1, self.n_bands + 1)))
+            # Get the bounding box in geographical coordinates
+            bbox = src.window_bounds(window)
+        return np.array(clip), box(*bbox)
+
+
 def initialize_resnet18(n_classes, n_channels, device, params):
     """
     Initializes the ResNet-18 model, optimizer, scheduler, scaler, and loss criterion.
     """
-    model = resnet18(n_classes, in_channels=n_channels, pretrained=True)
+    model = resnet18(n_classes, in_channels=n_channels, pretrained=False)
 
     # Move the model to the specified device
     if torch.cuda.device_count() >= 1:
