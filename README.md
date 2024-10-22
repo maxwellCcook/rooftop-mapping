@@ -1,2 +1,3 @@
-# opp-rooftop-mapping
- Classifying roof material types from PlanetScope SuperDove imagery.
+# Mapping roofing materials from multispectral satellite imagery and a Convolutional Neural Network as a step toward modeling fire behavior in urban landscapes
+
+Classifying roof material types from PlanetScope SuperDove imagery using Convolutional Neural Network classifier (ResNet-18).
