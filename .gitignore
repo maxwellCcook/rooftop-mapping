@@ -7,7 +7,6 @@ archive/*
 *.qgz
 *.tif
 *results/*
-*figures/*
 *code/torchsat
 figures/Figure_Arrangements.pptx
 
