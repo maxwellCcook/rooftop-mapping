@@ -357,29 +357,71 @@ def print_raster(raster, open_file):
     del img
 
 
-def band_correlations(da_in, out_png):
-    """ Returns a correlation plot """
-    # Convert to a numpy array and test band correlations
-    image_np = da_in.values
+def band_correlations(da_in, plot=True, out_png=None):
+    """
+    Returns and optionally plots a correlation matrix from an input multiband array.
+
+    Parameters:
+    -----------
+    da_in : xarray.DataArray
+        Input data array containing the multiband image data.
+    plot : bool
+        Whether to plot the correlation matrix. Default is True.
+    out_png : str, optional
+        File path to save the plot. Default is None (does not save).
+
+    Returns:
+    --------
+    cor_mat_tm : numpy.ndarray
+        Computed correlation matrix.
+    """
+    # prep the data array
+    image_np = da_in.values  # read as array
+    bands, height, width = image_np.shape  # get the dimensions
+
+    # Extract band labels from "long_name" attribute
+    band_labels = da_in.attrs.get('long_name', [f"Band {i + 1}" for i in range(bands)])
+    if isinstance(band_labels, tuple):  # Ensure it's iterable
+        band_labels = list(band_labels)
+
     # Reshape the data to (bands, pixels)
-    bands, height, width = image_np.shape
     image_np_t = image_np.reshape(bands, -1).T  # Transpose to get shape (pixels, bands)
     # Create a mask for non-NaN values
     valid_mask = ~np.isnan(image_np_t).any(axis=1)
-    # Handle NaN for the correlation matrix
-    image_np_tm = image_np_t[valid_mask]
+    image_np_tm = image_np_t[valid_mask]  # handle nan
     # Calculate the correlation matrix
     cor_mat_tm = np.corrcoef(image_np_tm, rowvar=False)
 
-    # Plot the correlation matrix
-    plt.figure(figsize=(10, 8))
-    sns.heatmap(cor_mat_tm, annot=True, cmap='coolwarm', vmin=-1, vmax=1)
-    plt.title('Band Correlation Matrix')
-    plt.savefig(out_png, dpi=300, bbox_inches='tight')
-    plt.show()
+    if plot:
+        plt.figure(figsize=(5, 4))
+        sns.set(font_scale=1.2)
+        ax = sns.heatmap(
+            cor_mat_tm,
+            annot=True,
+            annot_kws={"size": 8},
+            cmap='coolwarm',
+            vmin=-1, vmax=1,
+            xticklabels=band_labels,
+            yticklabels=band_labels,
+            cbar_kws={'label': 'Pearson correlation coefficient'}
+        )
 
-    # Clean up
-    del image_np, image_np_t, image_np_tm, valid_mask, cor_mat_tm
+        # adjust the colorbar and axis font
+        cbar = ax.collections[0].colorbar  # Access the colorbar object
+        cbar.ax.yaxis.label.set_size(10)  # Set font size for the colorbar label
+        cbar.ax.tick_params(labelsize=8)
+
+        ax.set_xticklabels(ax.get_xticklabels(), rotation=45, ha="right", fontsize=9)
+        ax.set_yticklabels(ax.get_yticklabels(), fontsize=9)
+
+        plt.tight_layout()
+
+        if out_png:
+            plt.savefig(out_png, dpi=300, bbox_inches='tight', format='png')
+        plt.show()
+
+    del image_np, image_np_t, image_np_tm, valid_mask  # Clean up
+    return cor_mat_tm
 
 
 def min_dist_sample(gdf, min_distance):
