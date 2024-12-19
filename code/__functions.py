@@ -670,7 +670,7 @@ def flatten_array(arr):
     return arr_flat  # return the numpy array
 
 
-def array_to_xrda(arr, ref_da, dtype, clip=False, export=False, out_fp=None):
+def array_to_xrda(arr, ref_da, dtype, clip=None, export=False, out_fp=None):
     """ Converts flattened numpy array to Xarray DataArray
     Optionally exports as GeoTIFF
 
