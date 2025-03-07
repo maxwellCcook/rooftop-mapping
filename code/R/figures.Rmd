@@ -6,12 +6,17 @@ date: "2023-06-21"
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-source('setup.R')
+
+library(tidyverse)
+library(sf)
+library(viridis)
 ```
 
 ## Mapping Rooftop Materials
 
 ```{r}
+sample <- read_csv('../../data/tabular/mod/dc_data/training/dc_data_reference_sampled.csv') %>%
+  rename(rid = ...1)
 head(sample)
 ```
 
@@ -62,7 +67,14 @@ df <- sample_p %>%
   group_by(class_code,psband) %>%
   summarize_all(.funs=mean)
 head(df)
+```
 
+```{r}
+
+# create a color mapping for the classes
+{'AP': '#f67088', 'CN': '#db8831', 'CS': '#ad9c31', 'ME': '#77aa31', 
+ 'SH': '#33b07a', 'SL': '#35aca4', 'TG': '#38a8c5', 'TL': '#6e9af4', 
+ 'UR': '#cc79f4', 'WS': '#f565cc'}
 
 spectral_response <- ggplot() +
   geom_rect(data=rects, aes(xmin=xmin,xmax=xmax,ymin=ymin,ymax=ymax,fill=band),alpha=0.2) +
