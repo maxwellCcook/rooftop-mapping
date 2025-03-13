@@ -152,5 +152,39 @@ ggsave(
 
 
 ##############################
-# Combine the plots into one #
+# Version 2 #
 
+# Pivot the table and tidy
+sample_p2 <- sample %>%
+ select(c(region, class_code, material, coastal_blue, blue, 
+          green_i, green, yellow, red, rededge, nir)) %>%
+ pivot_longer(
+  cols = -c(region, class_code, material),
+  names_to = "index",
+  values_to = "reflectance"
+ ) %>%
+ group_by(region, index) %>%
+ mutate(
+  refl_norm = 
+   (reflectance - min(reflectance)) / 
+   (max(reflectance) - min(reflectance))
+ )
+
+# make the plot
+spectral_response2 <- ggplot() +
+ geom_boxplot(
+  data = sample_p2,
+  aes(y = refl_norm, fill = factor(material)),
+  outlier.size = 0.1
+ ) +
+ scale_fill_manual(
+  values = roof_colors,  
+  name = "Material"
+ ) +
+ facet_grid(region ~ index) +  # Facet by region and spectral index
+ labs(fill = "Material") +
+ theme_bw(base_size = 8) +
+ theme(legend.position = "bottom",
+       axis.text.x = element_blank())
+
+spectral_response2
