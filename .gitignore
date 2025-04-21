@@ -1,5 +1,7 @@
 # Custom ignores (user)
 */archive/*
+manuscript/*
+manuscript/
 archive/*
 *.DS_Store
 *data/*
